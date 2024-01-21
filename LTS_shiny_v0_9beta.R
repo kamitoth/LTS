@@ -244,9 +244,9 @@ server <- function(input, output, session) {
   })
   
   observeEvent(input$Example, {
-    df <- read.csv("~/Statistics/LTS/df_example1.csv")
-    df2 <- read.csv("~/Statistics/LTS/df_example2.csv")
-    df3 <- read.csv("~/Statistics/LTS/df_example3.csv")
+    df <- read.csv("https://raw.githubusercontent.com/kamitoth/LTS/ca711a99857744ba86d1be176519020d989ed81c/df_example1.csv")
+    df2 <- read.csv("https://raw.githubusercontent.com/kamitoth/LTS/ca711a99857744ba86d1be176519020d989ed81c/df_example2.csv")
+    df3 <- read.csv("https://raw.githubusercontent.com/kamitoth/LTS/ca711a99857744ba86d1be176519020d989ed81c/df_example3.csv")
     values$df <- df
     values$df2 <- df2
     values$df3 <- df3
