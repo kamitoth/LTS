@@ -5,6 +5,7 @@ library(lme4)
 library(car)
 library(ggplot2)
 library(dplyr)
+library(ggpmisc)
 
 ui <- shinyUI(fluidPage(
   titlePanel("CRM stability assessment"),
@@ -65,8 +66,11 @@ ui <- shinyUI(fluidPage(
                    column(6, plotOutput("data_boxplot", width = "auto", height = 480))),
                  br(),
                  fluidRow(
-                   column(6, h4("Summary table"), tableOutput("summary_table"), align="center"),
+                   column(6, plotOutput("anal_seq", width = "auto", height = 480)),
                    column(6, plotOutput("hist", width = "auto", height = 480))),
+                 br(),
+                 fluidRow(
+                   column(6, h4("Summary table"), tableOutput("summary_table"), align="center"))
                )
              )
     ),
@@ -77,20 +81,20 @@ ui <- shinyUI(fluidPage(
              fluidRow(
                column(6, helpText("Residuals vs fitted values graph"),
                plotOutput("assOutput", width = "auto", height = 480),
-               uiOutput("res_vs_fitplot")),  
+               uiOutput("res_vs_fitplot"))  
              ),
              br(),
              helpText(h3("Normality check")),
-             verbatimTextOutput("sap_test"),
+             htmlOutput("sap_test"),
              br(),
              fluidRow(
                column(6, plotOutput("ass2Output", width = "auto", height = 480),
-               uiOutput("QQplots")),
+               uiOutput("QQplots"))
              ),
              br()
              
     ),
-    tabPanel("Uncertainty estimation", 
+    tabPanel("Uncertainty associated with stability", 
              sidebarLayout(
                sidebarPanel(
                  helpText("Define your study below and fill in the table with your data."),
@@ -102,6 +106,7 @@ ui <- shinyUI(fluidPage(
                  ),
                  width = 2),
                mainPanel(
+                 tableOutput("ustab_table"), 
                  verbatimTextOutput("ustab"),
                  verbatimTextOutput("ucOutput"),
                  verbatimTextOutput("bias")
@@ -115,6 +120,7 @@ ui <- shinyUI(fluidPage(
                  helpText(h5("Please, keep in mind: if the number of units is small (5-6 or less) then the estimate has a large uncertainty.")),
                  width = 2),
                mainPanel(
+                 tableOutput("uhom_table"),
                  verbatimTextOutput("uhom"),
                  verbatimTextOutput("uc_homOutput")
                )
@@ -184,7 +190,8 @@ server <- function(input, output, session) {
           contextMenu = TRUE,
           readOnly = FALSE  # Set readOnly to TRUE for "unit_no" column
         ) %>%
-        hot_col(c("time", "unit_no"), format = "0") #%>%
+        hot_col(c("time", "unit_no"), format = "0") %>%
+        hot_context_menu(allowRowEdit = FALSE, allowColEdit = FALSE) #%>%
       #hot_col(c(paste0("repl", 1:as.integer(input$no_repl))), format = "0.00e+0") 
     }
   })
@@ -200,7 +207,8 @@ server <- function(input, output, session) {
           contextMenu = TRUE
         ) %>%
         hot_col(c("time", "unit_no"), readOnly = TRUE, format = "0") %>%
-        hot_col(c("time", "unit_no", paste0("repl", 1L:as.integer(input$no_repl))), format = "0") 
+        hot_col(c("time", "unit_no", paste0("repl", 1L:as.integer(input$no_repl))), format = "0") %>%
+        hot_context_menu(allowRowEdit = FALSE, allowColEdit = FALSE) 
     }
   })
   
@@ -215,7 +223,8 @@ server <- function(input, output, session) {
           contextMenu = TRUE
         ) %>%
         hot_col(c("time", "unit_no"), readOnly = TRUE, format = "0") %>%
-        hot_col(c("time", "unit_no", paste0("repl", 1:as.integer(input$no_repl))), format = "0") 
+        hot_col(c("time", "unit_no", paste0("repl", 1:as.integer(input$no_repl))), format = "0") %>%
+        hot_context_menu(allowRowEdit = FALSE, allowColEdit = FALSE) #%>%
     }
   })
   
@@ -242,15 +251,19 @@ server <- function(input, output, session) {
     print("df3 updated")
     print(str(df3))
   })
-  
+ 
+  # BUG! Example needs to clicked twice if wrong input values are set! 
   observeEvent(input$Example, {
+      updateNumericInput(session, "time_points", value = 4L)
+      updateNumericInput(session, "no_units", value = 2L)
+      updateNumericInput(session, "no_repl", value = 5L)
     df <- read.csv("https://raw.githubusercontent.com/kamitoth/LTS/ca711a99857744ba86d1be176519020d989ed81c/df_example1.csv")
     df2 <- read.csv("https://raw.githubusercontent.com/kamitoth/LTS/ca711a99857744ba86d1be176519020d989ed81c/df_example2.csv")
     df3 <- read.csv("https://raw.githubusercontent.com/kamitoth/LTS/ca711a99857744ba86d1be176519020d989ed81c/df_example3.csv")
     values$df <- df
     values$df2 <- df2
     values$df3 <- df3
-  })
+  }, ignoreInit = TRUE)
   
   observe({
     df <- values$df
@@ -282,7 +295,10 @@ server <- function(input, output, session) {
       print(str(df_long))
       
       # Check unique levels of unit_no
-      unique_unit_no <- unique(df_long$unit_no)
+      if (!is.null(df_long$unit_no)) {
+        unique_unit_no <- unique(df_long$unit_no)
+      }
+
       print("unique_unit_no")
       print(length(unique_unit_no))
       
@@ -312,7 +328,7 @@ server <- function(input, output, session) {
           if (sig_slope < 0.05) {
             # correct data for analytical trend
             df_long$res2 <- df_long$res - df_long$anal * summary(lm(res ~ anal, df_long))$coefficients['anal', 'Estimate']
-            uc <- lm(res2 ~ time, df_long) # change df_long!!!! + unrealistic scenario
+            uc <- lm(res2 ~ time, df_long) 
           } else {
             uc <- lm(res ~ time, df_long)
           }
@@ -423,7 +439,16 @@ server <- function(input, output, session) {
         # Extract standard error (again, just for comparison)
         se_lm2 <- summary(lm_mod2)$coefficients['time', 'Std. Error']
         
+        values$uc <- uc
+        values$sap <- sap
+        values$se_lme <- se_lme
+        values$se_lm <- se_lm
+        values$se_lm2 <- se_lm2
+        values$sig_lme <- sig_lme
+        values$sig_slope <- sig_slope
+        
         #Estimation of uncertainty associated with heterogeneity based on the stability data
+        uc <- values$uc
         if (!is.null(uc) && inherits(uc, "lmerMod") && length(unique_unit_no) > 1L){
           uc_hom <- update(uc, REML=T)
           uc_hom_VC <- as.data.frame(VarCorr(uc_hom))
@@ -431,21 +456,15 @@ server <- function(input, output, session) {
           busd_rel <- between_unit_sd/mean(df_long$res)
           within_unit_sd <- uc_hom_VC[which(uc_hom_VC$grp == 'Residual'),'sdcor']
           wsd_rel <- within_unit_sd/mean(df_long$res)
+          
+          values$uc_hom <- uc_hom
+          values$between_unit_sd <- between_unit_sd
+          values$within_unit_sd <- within_unit_sd
+          values$busd_rel <- busd_rel
+          values$wsd_rel <- wsd_rel
         } 
-        
-        values$uc <- uc
-        values$sap <- sap
-        values$se_lme <- se_lme
-        values$se_lm <- se_lm
-        values$se_lm2 <- se_lm2
-        values$sig_lme <- sig_lme
-        values$uc_hom <- uc_hom
-        values$between_unit_sd <- between_unit_sd
-        values$within_unit_sd <- within_unit_sd
-        values$busd_rel <- busd_rel
-        values$wsd_rel <- wsd_rel
       } else {
-        values$uc <- "Insufficient data in measurement table."
+        values$uc <- "Insufficient data in measured values table." 
       }
     }
   })
@@ -504,6 +523,40 @@ server <- function(input, output, session) {
       fit2 <- fit2 + facet_wrap(~run)
     }
     print(fit2)
+  })
+  
+  output$anal_seq <- renderPlot({
+    df_long <- values$df_long
+    df_long <- na.omit(df_long)
+    if (!is.null(df_long) && length(unique(df_long$unit_no)) < 2L) {
+      # If a 'single object' was tested 
+      fit4 <- ggplot(df_long, aes(x=anal, y=res))+
+        geom_point( size=3)+
+        stat_smooth(method='lm', formula = y ~ x, se = FALSE, color="black")
+    } else if (!is.null(df_long) && length(unique(df_long$unit_no)) > 1L){
+      # Show unit numbers with different colors if multiple units were tested
+      fit4 <- ggplot(df_long, aes(x=anal, y=res))+
+        stat_smooth(method='lm', formula = y ~ x, se = FALSE, color="black")+
+        geom_point( size=3)+
+        labs(colour = "unit number")
+    }
+    fit4 <- fit4 + labs(title = "Analytical sequence graph", x="analytical sequence", y="result")
+    fit4 <- fit4 + theme(panel.border = element_rect(linetype = "solid", fill = NA),
+                       plot.title = element_text(size = 22),
+                       axis.title = element_text(size = 18),
+                       axis.text = element_text(size = 15),
+                       legend.title = element_text(size = 18),
+                       legend.text = element_text(size = 15))
+    if (!is.null(input$sel) && any(input$sel == "run")){
+      fit4 <- fit4 + facet_wrap(~run)
+    }
+    fit4 <- fit4 + stat_fit_glance(method = "lm",
+                                   label.y = "bottom",
+                                   label.x = "right",
+                                   method.args = list(formula = y ~ x),
+                                   mapping = aes(label = sprintf('italic(p)~"="~%.2g', after_stat(p.value))),
+                                   parse = TRUE)
+    print(fit4)
   })
   
   # Update the checkboxGroupInput choices based on the data frame
@@ -647,7 +700,7 @@ server <- function(input, output, session) {
     if (!is.null(uc) & class(uc) == "lmerMod") {
       # If uc is lmerMod, show residuals vs fitted values graph
       par(mfrow = c(2, 1)); plot(uc)
-    } else{
+    } else if (!is.null(uc) & class(uc) == "lm") {
       # If uc is lm, show both residuals and standardized residuals vs fitted values graph
       par(mfrow = c(2, 1)); plot(uc, 1); plot(uc, 3)
     }
@@ -657,31 +710,22 @@ server <- function(input, output, session) {
     uc <- values$uc
     if (!is.null(uc) & class(uc) == "lmerMod") {
       qqnorm(resid(uc)); qqline(resid(uc))
-    } else {
+    } else if (!is.null(uc) & class(uc) == "lm") {
       plot(uc, 2)
     }
   })
   
-  output$lev_test <- renderText({
-    lev <- values$lev
-    if (!is.null(lev)) {
-      paste(paste("Levene's test p-value is", sep = " ", signif(lev, digits = 2)),
-            if (lev > 0.05){
-              "H0 (p>0.05): population variances are approximately equal (homoscedasticity) at the 95% CL"
-            } else {
-              "H0 (p<0.05): population variances are NOT equal (heterocedasticity) at the 95% CL"
-            }, sep="\n")
-    }
-  })
-  
   output$sap_test <- renderText({
+    uc <- values$uc
     sap <- values$sap
-    if (!is.null(sap)) {
-      paste(paste("Shapiro-Wilk's normality test p-value is", sep = " ", signif(sap, digits = 2)),
+    print("class")
+    print(class(uc))
+    if (class(uc) != "character" && !is.null(sap)) {
+      paste(paste("Shapiro-Wilk's normality test p-value is", sep = " ", signif(sap, digits = 2), ".<br>"),
             if (sap > 0.05){
-              "H0 (p>0.05): residuals are approximately normally distributed at the 95% CL"
+              "H0 (p>0.05): residuals are approximately normally distributed at the 95% CL."
             } else {
-              "H0 (p<0.05): residuals are NOT normally distributed at the 95% CL"
+              "H0 (p<0.05): residuals are <span style='color:red;'> NOT </span> normally distributed at the 95% CL."
             }, sep="\n")
     }
   })
@@ -696,7 +740,23 @@ server <- function(input, output, session) {
     url2
   })
 
-  
+  output$ustab_table <- renderTable({
+    uc <- values$uc
+    se_lme <- values$se_lme
+    sig_lme <- values$sig_lme
+    if (!is.null(uc) & class(uc) == "lmerMod") {
+      ults <- data.frame(tcert=input$target_time_int,
+                         slope= sprintf("%.2e", coef(summary(uc))[ , "Estimate"][[2L]]),
+                         SE_slope= sprintf("%.2e", se_lme),
+                         u_stab= ifelse(sig_lme<0.5, "significant slope", sprintf("%.2e",input$target_time_int*se_lme)),
+                         p = signif(sig_lme, digits=3),
+                         Formula= deparse(formula(uc)))
+      colnames(ults) = 
+        c("t<sub>cert</sub>", "slope", "SE<sub>slope</sub>", "u<sub>stab</sub>", "P", "Formula")
+      return(ults)
+      }
+    }, sanitize.colnames.function = identity, caption = "Calculation of uncertainty associated with stability", caption.placement = "top")
+
   output$ustab <- renderText({
     uc <- values$uc
     se_lme <- values$se_lme
@@ -728,23 +788,44 @@ server <- function(input, output, session) {
   })
   
   output$bias <- renderText({
+    uc <- values$uc
     se_lme <- values$se_lme
     se_lm <- as.numeric(values$se_lm)
     se_lm2 <- as.numeric(values$se_lm2)
     val <- (se_lm-se_lme)/se_lme*100L
     val2 <- (se_lm2-se_lme)/se_lme*100L
-    if (!is.null(se_lm) & !is.null(se_lme)) {
+    if (inherits(uc, "lmerMod") && !is.null(se_lm) & !is.null(se_lme)) {
       paste(paste("If between unit variances would be ignored (linear regression model)", sep="\n", "the uncertainty estimate would be biased by"), 
             paste(sep = " ", signif(val, digits = 3), "% (all data) or", signif(val2, digits = 3), "% (unit means)"))
     }
   })
   
-  output$uhom <- renderText({
+  output$uhom_table <- renderTable({
+    uc <- values$uc
+    uc_hom <- values$uc_hom
     between_unit_sd <- values$between_unit_sd
     within_unit_sd <- values$within_unit_sd
     busd_rel <- values$busd_rel
     wsd_rel <- values$wsd_rel
-    if (!is.null(between_unit_sd) & !is.null(within_unit_sd)) {
+    if (!is.null(uc_hom) & inherits(uc, "lmerMod")) {
+      uhomt <- data.frame(sbb= sprintf("%.2e", between_unit_sd),
+                         sbb_rel= busd_rel*100,
+                         swb= sprintf("%.2e", within_unit_sd),
+                         swb_rel= wsd_rel*100,
+                         Formula= deparse(formula(uc_hom)))
+      colnames(uhomt) = 
+        c("s<sub>bb</sub>", "s<sub>bb,rel</sub>%", "s<sub>wb</sub>", "s<sub>wb,rel</sub>%", "Formula")
+      return(uhomt)
+    }
+  }, sanitize.colnames.function = identity, caption = "Calculation of values associated with heterogeneity", caption.placement = "top")
+  
+  output$uhom <- renderText({
+    uc <- values$uc
+    between_unit_sd <- values$between_unit_sd
+    within_unit_sd <- values$within_unit_sd
+    busd_rel <- values$busd_rel
+    wsd_rel <- values$wsd_rel
+    if (!is.null(uc) & inherits(uc, "lmerMod") && !is.null(between_unit_sd) & !is.null(within_unit_sd)) {
       paste(paste(paste("The between unit standard deviation (standard uncertainty associated with heterogeneity) estimate is", 
             signif(between_unit_sd, digits = 3), sep=" "),".", sep=""),
       paste("If the mean accurately represents the central tendency of the dataset, then", signif(busd_rel*100, digits = 3), "% is the relative between unit SD estimate."),
@@ -752,12 +833,15 @@ server <- function(input, output, session) {
             signif(within_unit_sd, digits = 3), sep=" "),".", sep=""),
       paste("If the mean accurately represents the central tendency of the dataset, then", signif(wsd_rel*100, digits = 3), "% is the relative within unit SD estimate."),
       sep="\n")
+    } else {
+      print("Dataset not suitable to perform REML.")
     }
   })
   
   output$uc_homOutput <- renderPrint({
     uc_hom <- values$uc_hom
-    if (!is.null(uc_hom)) {
+    uc <- values$uc
+    if (!is.null(uc_hom) & inherits(uc, "lmerMod")) {
       print(summary(uc_hom))
       
       # Check singular fit warnings and print the warning message if present
@@ -771,7 +855,7 @@ server <- function(input, output, session) {
                    "variances of one or more linear combinations of effects are (close to) zero")
         paste(a,b, sep ="\n")
       }
-    } 
+    }
   })
 }
 
